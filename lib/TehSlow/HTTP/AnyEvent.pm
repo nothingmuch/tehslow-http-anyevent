@@ -1,7 +1,7 @@
 package TehSlow::HTTP::AnyEvent;
 use Moose;
 
-use MooseX::Types::Moose qw(Int Str);
+use MooseX::Types::Moose qw(Int Str Bool);
 use MooseX::Types::URI qw(Uri);
 
 use AnyEvent;
@@ -22,12 +22,12 @@ BEGIN {
 my %count;
 
 sub ident ($) {
-    join ".", $_[0], ++$count{$_[0]}; # new_uuid_string(); # easier to read for now
+    join ".", $_[0], new_uuid_string(); # easier to read for now
 }
 
 use namespace::clean -except => 'meta';
 
-with qw(TehSlow::Output MooseX::Getopt MooseX::Runnable);
+with qw(TehSlow::Output MooseX::Getopt::Dashes MooseX::Runnable);
 
 has id => (
     isa => Str,
@@ -54,6 +54,18 @@ has uri => (
     is  => "ro",
     coerce => 1,
     required => 1,
+);
+
+has header_data => (
+    isa => Bool,
+    is  => "ro",
+    default => 1,
+);
+
+has body_data => (
+    isa => Bool,
+    is  => "ro",
+    default => 0,
 );
 
 sub run {
@@ -115,20 +127,38 @@ sub run {
                                 $self->event('http.response.start', resource => $req );
                                 $h->on_read;
 
-                                $h->push_read( line => "\015\012\015\012" => sub {
+                                # FIXME something faster would be better
+                                # the header reader from Server::HTTP, for instance
+                                $h->push_read( regex => qr/\015?\012\015?\012/ => sub {
                                     my ( $h, $headers ) = @_;
-                                    $self->event('http.response.headers.finished', resource => $req, data => $headers );
+
+                                    my ( $status ) = ( $headers =~ m{^HTTP/\S+\s+(\d+)} );
+
+                                    $self->event('http.response.headers.finished',
+                                        resource => $req,
+                                        data => {
+                                            status => 0+$status,
+                                            # FIXME connection, content-length, transfer-encoding
+                                            ($self->header_data ? ( raw => $headers ) : ()),
+                                        },
+                                    );
 
                                     $h->on_read(sub {
                                         $self->event('http.response.body.start', resource => $req);
                                         $h->on_read(sub{
                                             $length += length($h->{rbuf});
-                                            delete $h->{rbuf};
+                                            if ( $self->body_data ) {
+                                                $self->event('http.response.body.data', resource => $req, data => delete $h->{rbuf});
+                                            } else {
+                                                delete $h->{rbuf};
+                                            }
                                         });
                                 });
                                 });
                             });
 
+                            # FIXME only if Connection: close or HTTP/1.0
+                            # under 1.1 we need to parse chunked and/or content-length
                             $h->on_eof(sub {
                                 my $h = shift;
                                 $self->event('http.response.finished', resource => $req, length => $length);
