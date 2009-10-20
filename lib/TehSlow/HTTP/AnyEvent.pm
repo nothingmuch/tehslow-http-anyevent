@@ -183,6 +183,8 @@ sub run {
     $cv->recv;
 
     $self->event( 'tehslow.end', resource => $self->id );
+
+    return 0;
 }
 
 __PACKAGE__->meta->make_immutable;
