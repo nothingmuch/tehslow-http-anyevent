@@ -35,7 +35,7 @@ has id => (
     lazy_build => 1,
 );
 
-sub _build_id { ident "tester" }
+sub _build_id { ident "test" }
 
 has num => (
     isa => Int,
@@ -118,9 +118,7 @@ sub run {
                             $h->push_write("GET / HTTP/1.0\015\012Host: 0.0.0.0\015\012\015\012");
                         } else {
                             $h->on_drain;
-                            $self->event('http.request.headers.finished', resource => $req );
-
-                            $self->event('http.response.read', resource => $req );
+                            $self->event('http.request.headers.end', resource => $req );
 
                             my $length = 0;
                             $h->on_read(sub {
@@ -134,26 +132,25 @@ sub run {
 
                                     my ( $status ) = ( $headers =~ m{^HTTP/\S+\s+(\d+)} );
 
-                                    $self->event('http.response.headers.finished',
+                                    $self->event('http.response.headers.end',
                                         resource => $req,
                                         data => {
                                             status => 0+$status,
                                             # FIXME connection, content-length, transfer-encoding
+                                            length => length($headers),
                                             ($self->header_data ? ( raw => $headers ) : ()),
                                         },
                                     );
 
-                                    $h->on_read(sub {
-                                        $self->event('http.response.body.start', resource => $req);
-                                        $h->on_read(sub{
-                                            $length += length($h->{rbuf});
-                                            if ( $self->body_data ) {
-                                                $self->event('http.response.body.data', resource => $req, data => delete $h->{rbuf});
-                                            } else {
-                                                delete $h->{rbuf};
-                                            }
-                                        });
-                                });
+                                    $h->on_read(sub{
+                                        my $buf = delete $h->{rbuf};
+                                        $length += length($buf);
+                                        $self->event('http.response.body.data',
+                                            resource => $req,
+                                            length => length($buf),
+                                            ( $self->body_data ? ( raw => $buf ) : () ),
+                                        );
+                                    });
                                 });
                             });
 
@@ -161,7 +158,7 @@ sub run {
                             # under 1.1 we need to parse chunked and/or content-length
                             $h->on_eof(sub {
                                 my $h = shift;
-                                $self->event('http.response.finished', resource => $req, length => $length);
+                                $self->event('http.response.end', resource => $req);
                                 $h->destroy;
                                 $self->event('tcp.connection.closed', resource => $conn);
                                 undef $guard;
