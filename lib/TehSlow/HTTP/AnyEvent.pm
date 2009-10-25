@@ -147,8 +147,10 @@ sub run {
                                         $length += length($buf);
                                         $self->event('http.response.body.data',
                                             resource => $req,
-                                            length => length($buf),
-                                            ( $self->body_data ? ( raw => $buf ) : () ),
+                                            data => {
+                                                length => length($buf),
+                                                ( $self->body_data ? ( raw => $buf ) : () ),
+                                            },
                                         );
                                     });
                                 });
